@@ -508,6 +508,10 @@ table.dt tfoot td { font-weight: 700; background: var(--surface-2); }
 .scrim { position: fixed; inset: 0; background: rgba(10,16,14,.35); z-index: 39; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 
+.comp-top .cv small.stale, .stale-note { color: var(--nc); font-weight: 600; }
+.comp-top .cv small.stale { display: block; font-size: 10.5px; text-align: right; }
+.stale-btn { border-color: var(--nc); color: var(--nc); background: color-mix(in srgb, var(--nc) 10%, transparent); }
+
 </style>
 </head><body>
 <div class="app" id="app">
@@ -560,7 +564,7 @@ table.dt tfoot td { font-weight: 700; background: var(--surface-2); }
             <button data-act="price-mode" data-mode="direct">Giá trực tiếp</button><button data-act="price-mode" data-mode="client">Giá báo khách</button>
           </div>
           <span class="spacer"></span>
-          <button class="btn sm" data-act="refresh-all" title="Lấy đơn giá mới nhất trong kho cho mọi thành phần"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3M4 4v4h4M4 13a8 8 0 0 0 14.9 3M20 20v-4h-4"/></svg>Cập nhật giá từ kho</button>
+          <button class="btn sm" id="refreshAllBtn" data-act="refresh-all" title="Lấy đơn giá mới nhất trong kho cho mọi dòng của dự án này"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3M4 4v4h4M4 13a8 8 0 0 0 14.9 3M20 20v-4h-4"/></svg><span>Cập nhật giá từ kho</span></button>
         </div>
         <div class="proj-strip" id="projStrip"></div>
         <div class="sample-note" id="sampleNote" hidden><b>Dự án mẫu.</b> Khối lượng tính sơ bộ từ quy mô, đơn giá tham khảo. Bấm <button class="btn sm" data-act="proj-new">+ Dự án mới</button> để chọn quy mô cho công trình của bạn.</div>
@@ -1195,13 +1199,14 @@ function itemFromWork(w, lib, qtyExpr, note) {
     id: uid('i'), src: w.code, code: w.code, name: w.name, unit: w.unit,
     qtyExpr: qe, qty: evalExpr(qe) || 0, note: note == null ? (w.note || '') : note,
     comps, override: w.fixedPrice != null && !(w.comps || []).length ? w.fixedPrice : null,
+    ovSrc: w.fixedPrice != null && !(w.comps || []).length ? 'lib' : undefined, srcKind: 'work',
     imgs: []
   };
 }
 function itemFromRes(r) {
   return {
     id: uid('i'), src: r.code, code: r.code, name: r.name, unit: r.unit,
-    qtyExpr: '1', qty: 1, note: '', comps: [compFromRes(r, 1, 0)], override: null, imgs: []
+    qtyExpr: '1', qty: 1, note: '', comps: [compFromRes(r, 1, 0)], override: null, srcKind: 'res', imgs: []
   };
 }
 
@@ -2485,14 +2490,76 @@ function duplicateItem(id) {
   });
   toast('Đã nhân bản dòng');
 }
-function refreshItemPrices(item) {
-  const idx = libIndex(S.lib); let n = 0;
-  item.comps.forEach(c => {
-    const r = idx[c.code]; if (!r || r.type !== c.type) return;
-    const np = Math.round(r.price * (Number(c.k) || 1));
-    if (np !== c.price) { c.price = np; n++; }
+/* ---- cập nhật giá từ kho ---- */
+function libLookup() {
+  const byTC = {}, byC = {}, works = {};
+  S.lib.res.forEach(r => { byTC[r.type + '|' + r.code] = r; if (!byC[r.code]) byC[r.code] = r; });
+  S.lib.works.forEach(w => { works[w.code] = w; });
+  return { byTC, byC, works };
+}
+function kRes(c, L) { return L.byTC[c.type + '|' + c.code] || L.byC[c.code] || null; }
+// giá trọn gói của dòng lấy từ kho (không phải nhập tay) thì trả về công tác mẫu tương ứng
+function fixedSourceWork(item, L) {
+  if (item.override == null || item.ovSrc === 'manual' || item.srcKind === 'res') return null;
+  const w = L.works[item.src];
+  if (!w || w.fixedPrice == null || (w.comps || []).length) return null;
+  if (item.ovSrc === 'lib' || !(item.comps || []).length) return w;
+  return null;
+}
+function refreshItem(item, L) {
+  const st = { price: 0, info: 0, missing: 0, fixed: 0 };
+  (item.comps || []).forEach(c => {
+    const r = kRes(c, L);
+    if (!r) { st.missing++; return; }
+    const np = Math.round((Number(r.price) || 0) * (Number(c.k) || 1));
+    if (np !== c.price) { c.price = np; st.price++; }
+    if (r.name !== c.name || r.unit !== c.unit) { c.name = r.name; c.unit = r.unit; st.info++; }
   });
-  return n;
+  const w = fixedSourceWork(item, L);
+  if (w) {
+    const np = Math.round(Number(w.fixedPrice) || 0);
+    if (np !== item.override) { item.override = np; st.fixed++; }
+    item.ovSrc = 'lib';
+  }
+  return st;
+}
+function applyRefresh(all) {
+  const p = proj();
+  const sel = !all && UI.sel && findItem(UI.sel);
+  if (!all && !sel) { toast('Chọn một dòng trong bảng trước', { err: true }); return; }
+  const L = libLookup();
+  const snap = snapshot();
+  const before = calcProject(p).grand;
+  const tot = { price: 0, info: 0, missing: 0, fixed: 0, rows: 0 };
+  const items = all ? p.cats.flatMap(c => c.items) : [sel.item];
+  items.forEach(it => {
+    const s = refreshItem(it, L);
+    Object.keys(s).forEach(k => { tot[k] += s[k]; });
+    if (s.price || s.fixed || s.info) tot.rows++;
+  });
+  const manual = !all && sel.item.override != null && sel.item.ovSrc === 'manual';
+  const missNote = tot.missing ? ` ${tot.missing} thành phần không còn trong kho, giữ nguyên giá cũ.` : '';
+  if (!(tot.price || tot.fixed || tot.info)) {
+    toast((all ? 'Mọi đơn giá đã khớp với kho.' : 'Đơn giá dòng này đã khớp với kho.') + (manual ? ' Dòng đang dùng giá trọn gói nhập tay nên không đổi.' : '') + missNote, tot.missing ? { err: true } : null);
+    return;
+  }
+  H.past.push(snap); if (H.past.length > 80) H.past.shift(); H.future.length = 0;
+  persist(); scheduleRender();
+  const diff = calcProject(proj()).grand - before;
+  const parts = [];
+  if (tot.price) parts.push(`${tot.price} đơn giá thành phần`);
+  if (tot.fixed) parts.push(`${tot.fixed} giá trọn gói`);
+  if (tot.info && !tot.price && !tot.fixed) parts.push(`tên, ĐVT của ${tot.info} thành phần`);
+  toast(`Đã cập nhật ${parts.join(' và ')}${all ? ` ở ${tot.rows} dòng` : ''}. Tổng báo khách ${diff >= 0 ? '+' : ''}${fmtMoney(diff)} đ.` + (manual ? ' Giá trọn gói nhập tay giữ nguyên.' : '') + missNote, { undo: true });
+}
+// đổi mã trong kho thì đổi theo ở các dự toán, để lần cập nhật giá sau vẫn tìm thấy
+function renameCodeInProjects(kind, type, oldCode, newCode) {
+  S.projects.forEach(p => p.cats.forEach(c => c.items.forEach(it => {
+    if (kind === 'res') {
+      (it.comps || []).forEach(cp => { if (cp.code === oldCode && cp.type === type) cp.code = newCode; });
+      if (it.srcKind === 'res' && it.src === oldCode) { it.src = newCode; it.code = newCode; }
+    } else if (it.srcKind !== 'res' && it.src === oldCode) { it.src = newCode; it.code = newCode; }
+  })));
 }
 /* ---------- render ---------- */
 let renderQueued = false;
@@ -2596,6 +2663,16 @@ function renderTable() {
     `<button class="btn ghost sm" data-act="proj-info">${ic('edit')} Thông tin công trình</button>`
   ].filter(Boolean).join('<span aria-hidden="true">·</span>') + '</div>';
   $('#sampleNote').hidden = !p.sample;
+  {
+    const L = libLookup(); let nSt = 0;
+    p.cats.forEach(c => c.items.forEach(it => {
+      if (it.comps.some(x => { const r = kRes(x, L); return r && Math.round(r.price * (Number(x.k) || 1)) !== x.price; })) nSt++;
+      else { const w = fixedSourceWork(it, L); if (w && Math.round(Number(w.fixedPrice) || 0) !== it.override) nSt++; }
+    }));
+    const btn = $('#refreshAllBtn');
+    btn.classList.toggle('stale-btn', nSt > 0);
+    btn.querySelector('span').textContent = nSt ? `Cập nhật giá từ kho (${nSt} dòng lệch)` : 'Cập nhật giá từ kho';
+  }
   $$('#priceSeg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === UI.priceMode));
   const wrap = $('#tableWrap');
   if (!p.cats.length) {
@@ -2680,12 +2757,17 @@ function renderDetail() {
     return;
   }
   const p = proj(); const it = f.item; const c = calcItem(it);
+  const L = libLookup();
+  const stale = it.comps.map(x => { const r = kRes(x, L); if (!r) return 'missing'; const np = Math.round(r.price * (Number(x.k) || 1)); return np !== x.price ? np : null; });
+  const fw = fixedSourceWork(it, L);
+  const fixedStale = fw && Math.round(Number(fw.fixedPrice) || 0) !== it.override ? Math.round(Number(fw.fixedPrice) || 0) : null;
+  const nStale = stale.filter(s => s != null && s !== 'missing').length + (fixedStale != null ? 1 : 0);
   const factor = feeFactor(p);
   const imgs = p.images.filter(im => im.itemId === it.id);
   const compRows = it.comps.map((x, i) => `<div class="comp">
       <div class="comp-top"><span class="tag ${x.type}">${x.type === 'M' ? 'MÁY' : x.type}</span>
         <div class="cn">${esc(x.name)}<small>${esc(x.code)} · ${esc(x.unit)}${x.k && x.k !== 1 ? ` · <b title="Hệ số giá theo mức hoàn thiện">giá kho ×${fmtNum(x.k, 2)}</b>` : ''}</small></div>
-        <div class="num cv" title="Chi phí cho 1 ${esc(it.unit)}">${fmtMoney(compCost(x))}</div>
+        <div class="num cv" title="Chi phí cho 1 ${esc(it.unit)}">${fmtMoney(compCost(x))}${stale[i] === 'missing' ? '<small class="stale" title="Mã này không còn trong kho">không có trong kho</small>' : stale[i] != null ? `<small class="stale" title="Giá trong kho khác giá đang dùng">kho: ${fmtMoney(stale[i])}</small>` : ''}</div>
         <button class="icon-btn danger" data-act="comp-del" data-i="${i}" aria-label="Xóa ${esc(x.name)}">${ic('x')}</button></div>
       <div class="comp-in">
         <label>Định mức<input class="inp" data-fk="cn-${it.id}-${i}" data-act="comp" data-i="${i}" data-f="norm" value="${fmtNum(Number(x.norm), 4)}" inputmode="decimal"></label>
@@ -2715,7 +2797,8 @@ function renderDetail() {
       <div class="small muted">Giá báo khách: <b class="num">${fmtMoney(Math.round(c.unit * factor))}</b> (cộng ${fmtNum((factor - 1) * 100, 2)}% chung + lợi nhuận) · Thành tiền: <b class="num">${fmtMoney(Math.round((it.qty || 0) * c.unit))}</b></div>
     </div>
     <div class="dt-sec">
-      <h4>Hao phí cho 1 ${esc(it.unit)} <span><button class="btn sm ghost" data-act="it-refresh" title="Lấy giá mới nhất trong kho">${ic('refresh')} Cập nhật giá</button></span></h4>
+      <h4>Hao phí cho 1 ${esc(it.unit)} <span><button class="btn sm ${nStale ? 'stale-btn' : 'ghost'}" data-act="it-refresh" title="Lấy giá mới nhất trong kho cho dòng này">${ic('refresh')} Cập nhật giá${nStale ? ` (${nStale})` : ''}</button></span></h4>
+      ${fixedStale != null ? `<div class="small stale-note">Giá trọn gói trong kho hiện là <b>${fmtMoney(fixedStale)}</b>, dòng này đang dùng ${fmtMoney(it.override)}.</div>` : ''}
       ${it.comps.length ? `<div class="comps">${compRows}</div>` : '<div class="small muted">Chưa có thành phần hao phí. Đơn giá đang là giá trọn gói hoặc bằng 0.</div>'}
       <div class="picker"><div class="search">${ic('search')}<input class="inp" id="compPick" data-fk="d-pick" placeholder="Tìm vật liệu, nhân công, máy để thêm…" autocomplete="off"></div><div class="picker-list" id="compPickList" hidden></div></div>
       <div class="comp-drop" id="compDrop">Hoặc kéo vật liệu / nhân công / máy từ thư viện thả vào đây</div>
@@ -2791,6 +2874,7 @@ function openWorkEditor(w, isNew) {
         d.updated = today();
         mutate(() => {
           const i = S.lib.works.findIndex(x => x.id === d.id);
+          if (i >= 0 && S.lib.works[i].code !== d.code) renameCodeInProjects('work', null, S.lib.works[i].code, d.code);
           if (i >= 0) S.lib.works[i] = d; else S.lib.works.push(d);
           if (!S.lib.groups.includes(d.group)) S.lib.groups.push(d.group);
         });
@@ -3301,11 +3385,8 @@ function onClick(e) {
     case 'undo': undo(); break;
     case 'redo': redo(); break;
     case 'comp-del': mutate(() => { findItem(UI.sel).item.comps.splice(Number(b.dataset.i), 1); }); break;
-    case 'it-refresh': { let n = 0; mutate(() => { n = refreshItemPrices(findItem(UI.sel).item); }); toast(n ? `Đã cập nhật ${n} đơn giá theo kho` : 'Giá đã khớp với kho'); break; }
-    case 'refresh-all': {
-      let n = 0; mutate(() => { proj().cats.forEach(c => c.items.forEach(it => { n += refreshItemPrices(it); })); });
-      toast(n ? `Đã cập nhật ${n} đơn giá thành phần theo kho` : 'Mọi đơn giá đã khớp với kho', n ? { undo: true } : null); break;
-    }
+    case 'it-refresh': applyRefresh(false); break;
+    case 'refresh-all': applyRefresh(true); break;
     case 'it-to-lib': {
       const it = findItem(UI.sel).item; const cat = findItem(UI.sel).cat;
       const exists = S.lib.works.find(w => w.code === it.code);
@@ -3375,8 +3456,8 @@ function onChange(e) {
       mutate(() => { proj().fees[el.dataset.k] = n; }); break;
     }
     case 'it-field': mutate(() => { findItem(UI.sel).item[el.dataset.f] = nfc(v.trim()); }); break;
-    case 'ovr-toggle': mutate(() => { const it = findItem(UI.sel).item; it.override = el.checked ? calcItem({ comps: it.comps }).analysed : null; }); break;
-    case 'ovr': { const n = parseNum(v); if (!isFinite(n)) { el.classList.add('bad'); return; } mutate(() => { findItem(UI.sel).item.override = n; }); break; }
+    case 'ovr-toggle': mutate(() => { const it = findItem(UI.sel).item; it.override = el.checked ? calcItem({ comps: it.comps }).analysed : null; it.ovSrc = el.checked ? 'manual' : undefined; }); break;
+    case 'ovr': { const n = parseNum(v); if (!isFinite(n)) { el.classList.add('bad'); return; } mutate(() => { const it = findItem(UI.sel).item; it.override = n; it.ovSrc = 'manual'; }); break; }
     case 'comp': {
       const n = parseNum(v); if (!isFinite(n)) { el.classList.add('bad'); return; }
       mutate(() => { findItem(UI.sel).item.comps[Number(el.dataset.i)][el.dataset.f] = n; }); break;
@@ -3393,7 +3474,7 @@ function onChange(e) {
       mutate(() => {
         const old = r.code;
         r[f] = val; if (f === 'price') r.updated = today();
-        if (f === 'code') S.lib.works.forEach(w => w.comps.forEach(c => { if (c.code === old) c.code = val; }));
+        if (f === 'code') { S.lib.works.forEach(w => w.comps.forEach(c => { if (c.code === old) c.code = val; })); renameCodeInProjects('res', r.type, old, val); }
       }, { render: f === 'code' || f === 'price' });
       break;
     }
