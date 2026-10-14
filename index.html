@@ -70,7 +70,24 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .brand-mark svg { width: 16px; height: 16px; stroke: var(--accent-ink); }
 .proj-pick { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 280px; }
 .proj-pick select { min-width: 0; flex: 1; max-width: 420px; font-weight: 600; }
-.tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; min-width: 0; }
+.nav-wrap { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.new-proj {
+  display: inline-flex; align-items: center; gap: 10px; flex: none; cursor: pointer;
+  border: 0; border-radius: 12px; padding: 8px 18px 8px 9px;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 72%, #000));
+  color: var(--accent-ink); text-align: left; line-height: 1.15;
+  box-shadow: 0 1px 0 rgba(255,255,255,.18) inset, 0 6px 16px color-mix(in srgb, var(--accent) 38%, transparent);
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.new-proj:hover { transform: translateY(-1px); box-shadow: 0 1px 0 rgba(255,255,255,.18) inset, 0 10px 22px color-mix(in srgb, var(--accent) 45%, transparent); }
+.new-proj:active { transform: translateY(0); }
+.new-proj:focus-visible { outline: 3px solid var(--mark); outline-offset: 2px; }
+.np-ico { width: 30px; height: 30px; border-radius: 9px; background: var(--mark); display: grid; place-items: center; flex: none; }
+.np-ico svg { width: 18px; height: 18px; fill: none; stroke: #1a1a1a; stroke-width: 2.8; stroke-linecap: round; }
+.np-txt { display: grid; }
+.np-txt b { font-size: 15.5px; font-weight: 700; letter-spacing: -.005em; }
+.np-txt small { font-size: 11px; opacity: .82; font-weight: 500; }
 .tabs::-webkit-scrollbar { display: none; }
 .tab {
   border: 0; background: transparent; padding: 8px 12px; border-radius: 6px; cursor: pointer;
@@ -456,7 +473,9 @@ table.dt tfoot td { font-weight: 700; background: var(--surface-2); }
   .totbar .grand .v { font-size: 18px; }
   .topbar { gap: 8px; }
   .proj-pick { flex-basis: 100%; order: 3; }
-  .tabs { order: 4; width: 100%; }
+  .nav-wrap { order: 4; width: 100%; gap: 10px; }
+  .new-proj { padding: 6px 12px 6px 7px; }
+  .np-txt small { display: none; }
 }
 @media (max-width: 640px) {
   .table-wrap { padding-inline: 10px; }
@@ -503,6 +522,11 @@ table.dt tfoot td { font-weight: 700; background: var(--surface-2); }
       <button class="icon-btn" id="undoBtn" data-act="undo" title="Hoàn tác (Ctrl+Z)" aria-label="Hoàn tác"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg></button>
       <button class="icon-btn" id="redoBtn" data-act="redo" title="Làm lại (Ctrl+Y)" aria-label="Làm lại"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></svg></button>
     </div>
+    <div class="nav-wrap">
+    <button class="new-proj" data-act="proj-new" title="Tạo dự án mới: chọn loại nhà, số tầng, kích thước">
+      <span class="np-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>
+      <span class="np-txt"><b>Dự án mới</b><small>Chọn quy mô công trình</small></span>
+    </button>
     <nav class="tabs" role="tablist" aria-label="Chức năng">
       <button class="tab" role="tab" data-tab="est">Dự toán</button>
       <button class="tab" role="tab" data-tab="kho">Kho dữ liệu</button>
@@ -511,6 +535,7 @@ table.dt tfoot td { font-weight: 700; background: var(--surface-2); }
       <button class="tab" role="tab" data-tab="exp">Xuất & in</button>
       <button class="tab" role="tab" data-tab="set">Thiết lập</button>
     </nav>
+    </div>
   </header>
   <div id="banner"></div>
 
